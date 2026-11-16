@@ -3,21 +3,23 @@ let s:save_cpo = &cpoptions
 set cpoptions&vim
 
 " Use old regexp engine. Necessary to avoid error E868 when using all the
-" equivalence classes, below.
-let s:letter_regexp = '\%#=1['
-let s:letter_regexp .= '[=a=][=b=][=c=][=d=][=e=]'
-let s:letter_regexp .= '[=f=][=g=][=h=][=i=][=j=]'
-let s:letter_regexp .= '[=k=][=l=][=m=][=n=][=o=]'
-let s:letter_regexp .= '[=p=][=q=][=r=][=s=][=t=]'
-let s:letter_regexp .= '[=u=][=v=][=w=][=x=][=y=]'
-let s:letter_regexp .= '[=z=]'
-" Greek/Coptic
-let s:letter_regexp .= 'Ͱ-Ͽ'
-" Cyrillic
-let s:letter_regexp .= 'Ѐ-ӿ'
-" Apostrophe!
-let s:letter_regexp .= "'"
-let s:letter_regexp .= ']$'
+" " equivalence classes, below.
+" let s:letter_regexp = '\%#=1['
+" let s:letter_regexp .= '[=a=][=b=][=c=][=d=][=e=]'
+" let s:letter_regexp .= '[=f=][=g=][=h=][=i=][=j=]'
+" let s:letter_regexp .= '[=k=][=l=][=m=][=n=][=o=]'
+" let s:letter_regexp .= '[=p=][=q=][=r=][=s=][=t=]'
+" let s:letter_regexp .= '[=u=][=v=][=w=][=x=][=y=]'
+" let s:letter_regexp .= '[=z=]'
+" " Greek/Coptic
+" let s:letter_regexp .= 'Ͱ-Ͽ'
+" " Cyrillic
+" let s:letter_regexp .= 'Ѐ-ӿ'
+" " Apostrophe!
+" let s:letter_regexp .= "'"
+" let s:letter_regexp .= ']$'
+
+let s:letter_regexp = '\%#=1[A-Za-z'']$'
 
 " ***************
 " *             *
@@ -25,7 +27,69 @@ let s:letter_regexp .= ']$'
 " *             *
 " ***************
 
-function! s:autocorrect() abort
+function! s:autocorrect(...) abort
+  let force = a:0 && a:1
+  let prev_lnum = get(s:, 'last_lnum', 0)
+  let s:last_lnum = line('.')
+  let before = strpart(getline('.'), 0, col('.') - 1)
+  let ctx_lnum = line('.')
+
+  if force
+    " Esc: the word right before the cursor
+    let token = matchstr(before, '\S*$')
+    let ctx = before
+    let tok_col = len(before) - len(token) + 1
+  elseif before =~# '^\s*$'
+    " Enter: only if the line just changed, and the previous line ends in a word
+    if line('.') == 1 || line('.') == prev_lnum
+      return
+    endif
+    let ctx_lnum = line('.') - 1
+    let ctx = getline(ctx_lnum)
+    let token = matchstr(ctx, '\S*$')
+    let tok_col = len(ctx) - len(token) + 1
+  elseif before =~# '[A-Za-z''][ \t.,;:!?)\]"]$'
+    " Exactly one delimiter right after a word (2nd+ space fails this)
+    let token = matchstr(strpart(before, 0, len(before) - 1), '\S*$')
+    let ctx = before
+    let tok_col = len(before) - len(token)
+  else
+    return
+  endif
+
+  if token !~# '^[A-Za-z'']\+$' || token =~# '^.\+[A-Z]'
+    return
+  endif
+
+  " Give spellbadword() sentence context from the previous line
+  let prev_text = ctx_lnum > 1 ? getline(ctx_lnum - 1) : ''
+  if ctx_lnum == 1 || prev_text =~# '^\s*$'
+    let sctx = '. ' . ctx
+  else
+    let sctx = matchstr(prev_text, '\S*\s*$') . ' ' . ctx
+  endif
+  let bad = spellbadword(sctx)
+  if empty(bad[0])
+    return
+  endif
+
+  " Capitalization error on the word just typed: fix it in place (no jump)
+  if bad[1] ==# 'caps' && bad[0] ==# token
+    let l = getline(ctx_lnum)
+    let cap = toupper(token[0]) . token[1:]
+    call setline(ctx_lnum, strpart(l, 0, tok_col - 1) . cap . strpart(l, tok_col - 1 + len(token)))
+
+    " Record the correction so highlight, undo and jump work
+    let spell_pos = [0, ctx_lnum, tok_col, 0]
+    let w:vim_you_autocorrect_last_pos = copy(spell_pos)
+    let w:vim_you_autocorrect_last_edit_pos = getpos('.')
+    let w:vim_you_autocorrect_before_correction = token
+    let w:vim_you_autocorrect_after_correction = cap
+    let w:vim_you_autocorrect_correct_count = 1
+    call s:highlight_correction(spell_pos)
+    return
+  endif
+
   let edit_pos = getpos('.')
 
   if s:pos_before(edit_pos, s:start_pos)
@@ -44,9 +108,11 @@ function! s:autocorrect() abort
   " would require doing MATHS: I'm guessing this is still pretty quick unless
   " your line is *really* long. (I'm also not sure if that would break if the
   " start of the last 4 bytes comes halfway through a code point.)
-  if empty(line)
-        \ ||
-        \ before_cursor !~? s:letter_regexp
+  " if force
+  "       \ || empty(line)
+  "       \ ||
+  "       \ before_cursor !~? s:letter_regexp
+  if 1
 
     if (s:no_error_nearby(before_cursor))
       return
@@ -323,7 +389,7 @@ function! s:highlight_correction(spell_pos)
           \ a:spell_pos[2],
           \ len(w:vim_you_autocorrect_after_correction)]])
     if has('timers')
-      let s:timer_id = timer_start(10000, {timer_id -> s:clear_highlight()})
+      let s:timer_id = timer_start(2000, {timer_id -> s:clear_highlight()})
     endif
     let s:win_id = win_getid(winnr())
   endif
@@ -369,13 +435,15 @@ function! vim_you_autocorrect#enable_autocorrect() abort
   augroup vim_you_autocorrect
     autocmd InsertEnter <buffer> call <SID>reset_start_pos()
     autocmd CursorMovedI <buffer> call <SID>autocorrect()
+    autocmd InsertLeavePre <buffer> call <SID>autocorrect(1)
     if !has('timers')
       autocmd CursorHold <buffer> call <SID>clear_highlight()
       autocmd CursorHoldI <buffer> call <SID>clear_highlight()
     endif
   augroup END
 
-  highlight link AutocorrectGood SpellBad
+  " highlight link AutocorrectGood SpellBad
+  highlight link AutocorrectGood DiffChange
 endfunction
 
 function! vim_you_autocorrect#disable_autocorrect() abort
@@ -395,7 +463,7 @@ function! s:reset_start_pos() abort
 endfunction
 
 function! s:remove_autocommands() abort
-  autocmd! vim_you_autocorrect InsertEnter,CursorMovedI <buffer>
+  autocmd! vim_you_autocorrect InsertEnter,CursorMovedI,InsertLeavePre <buffer>
 endfunction
 
 " *************
@@ -405,6 +473,16 @@ endfunction
 " *************
 
 function! vim_you_autocorrect#undo_last() abort
+  if exists('w:vim_you_autocorrect_last_pos')
+    let [corrected_line, sp, ep] = s:get_line_and_positions()
+    if corrected_line[sp:ep - 1] ==# w:vim_you_autocorrect_after_correction
+      let w:vim_you_autocorrect_redo = [
+            \ copy(w:vim_you_autocorrect_last_pos),
+            \ w:vim_you_autocorrect_before_correction,
+            \ w:vim_you_autocorrect_after_correction]
+    endif
+  endif
+
   let length_before_change = len(w:vim_you_autocorrect_after_correction)
   let adjustment = s:undo_last()
 
@@ -422,6 +500,8 @@ function! vim_you_autocorrect#undo_last() abort
   if exists('w:vim_you_autocorrect_last_pos')
     unlet w:vim_you_autocorrect_last_pos
   endif
+
+  call s:reset_start_pos()
 endfunction
 
 function! s:undo_last() abort
@@ -454,6 +534,33 @@ function! s:undo_last() abort
   endif
 
   return adjustment
+endfunction
+
+function! vim_you_autocorrect#redo_last() abort
+  if !exists('w:vim_you_autocorrect_redo')
+    return
+  endif
+  let [pos, before, after] = w:vim_you_autocorrect_redo
+  let lnum = pos[1]
+  let sp = pos[2] - 1
+  let line = getline(lnum)
+  if strpart(line, sp, strlen(before)) !=# before
+    let sp = stridx(line, before)
+    if sp < 0
+      return
+    endif
+    let pos[2] = sp + 1
+  endif
+  call setline(lnum, strpart(line, 0, sp) . after . strpart(line, sp + strlen(before)))
+  if line('.') == lnum && col('.') - 1 > sp
+    call cursor(lnum, col('.') + strlen(after) - strlen(before))
+  endif
+
+  " Restore the plugin's state so undo (and Jump) work again
+  let w:vim_you_autocorrect_last_pos = pos
+  let w:vim_you_autocorrect_before_correction = before
+  let w:vim_you_autocorrect_after_correction = after
+  call s:reset_start_pos()
 endfunction
 
 " ****************

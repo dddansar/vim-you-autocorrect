@@ -1,5 +1,20 @@
 # Vim You, Autocorrect!
 
+Detects spell errors and corrects them automatically based on Vim's most likely correction.
+
+## List Of Changes From The Orignal
+
+- Added fixes to address flickering and lag under various conditions.
+- Added fix to ignore non [a-zA-Z] characters or internal capital letters.
+- Changed the highlight group from SpellBad to DiffChange to make an autocorrected words more visible.
+- Decreased timer after which highlight color vanishes from 10s to 2s.
+- Removed check on Greek/Coptic and Cyrillic characters.
+- Added redo functionality, can cycle undo/redo multiple times.
+- Added fixes for capitalization autocorrect.
+
+
+# Original README:
+
 *Why should smartphones get all the fun?*
 
 ## UPDATE!!! New Version!
