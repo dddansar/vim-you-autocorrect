@@ -44,15 +44,25 @@ function! s:autocorrect(...) abort
     return
   endif
 
-  " spellbadword() needs the words before the token to know whether it
-  " starts a sentence. At the start of a line (or after a blank line) we
-  " use the last word of the previous line.
-  let prev_text = ctx_lnum > 1 ? getline(ctx_lnum - 1) : ''
-  if ctx_lnum == 1 || prev_text =~# '^\s*$'
-    let sctx = '. ' . ctx
+  " spellbadword() only reports the FIRST bad word in the string, so we must
+  " not hand it the whole line: an earlier unknown word would be reported
+  " instead of the token. Instead, build a minimal context: a known-good
+  " stand-in word, then whatever non-word characters (e.g. ". ") sat between
+  " the previous word and the token, then the token itself. That's all
+  " Vim needs to decide whether the token starts a sentence.
+  let lead = strpart(ctx, 0, tok_col - 1)
+  if lead =~# '^\s*$'
+    " Token is first on its line: look at the end of the previous line.
+    let prev_text = ctx_lnum > 1 ? getline(ctx_lnum - 1) : ''
+    if ctx_lnum == 1 || prev_text =~# '^\s*$'
+      let tail = '. '
+    else
+      let tail = matchstr(prev_text, '[^[:alnum:]]*$') . ' '
+    endif
   else
-    let sctx = matchstr(prev_text, '\S*\s*$') . ' ' . ctx
+    let tail = matchstr(lead, '[^[:alnum:]]*$')
   endif
+  let sctx = 'Ok' . tail . token
   let bad = spellbadword(sctx)
   if empty(bad[0])
     return
