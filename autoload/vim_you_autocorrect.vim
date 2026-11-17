@@ -57,10 +57,10 @@ function! s:autocorrect(...) abort
     if ctx_lnum == 1 || prev_text =~# '^\s*$'
       let tail = '. '
     else
-      let tail = matchstr(prev_text, '[^[:alnum:]]*$') . ' '
+      let tail = s:sentence_tail(prev_text) . ' '
     endif
   else
-    let tail = matchstr(lead, '[^[:alnum:]]*$')
+    let tail = s:sentence_tail(lead)
   endif
   let sctx = 'Ok' . tail . token
   let bad = spellbadword(sctx)
@@ -113,6 +113,15 @@ function! s:autocorrect(...) abort
   finally
     silent! call setpos('.', edit_pos)
   endtry
+endfunction
+
+" Reduce the text before a token to the ASCII punctuation/space that decides
+" whether the token starts a sentence. Whatever came before the punctuation is irrelevant.
+function! s:sentence_tail(text) abort
+  if a:text =~# '[.!?][)\]"'']*\s*$'
+    return '. '
+  endif
+  return substitute(matchstr(a:text, '[^[:alnum:]]*$'), '[^\x00-\x7f]', '', 'g')
 endfunction
 
 
