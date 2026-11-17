@@ -2,25 +2,6 @@
 let s:save_cpo = &cpoptions
 set cpoptions&vim
 
-" Use old regexp engine. Necessary to avoid error E868 when using all the
-" " equivalence classes, below.
-" let s:letter_regexp = '\%#=1['
-" let s:letter_regexp .= '[=a=][=b=][=c=][=d=][=e=]'
-" let s:letter_regexp .= '[=f=][=g=][=h=][=i=][=j=]'
-" let s:letter_regexp .= '[=k=][=l=][=m=][=n=][=o=]'
-" let s:letter_regexp .= '[=p=][=q=][=r=][=s=][=t=]'
-" let s:letter_regexp .= '[=u=][=v=][=w=][=x=][=y=]'
-" let s:letter_regexp .= '[=z=]'
-" " Greek/Coptic
-" let s:letter_regexp .= 'Ͱ-Ͽ'
-" " Cyrillic
-" let s:letter_regexp .= 'Ѐ-ӿ'
-" " Apostrophe!
-" let s:letter_regexp .= "'"
-" let s:letter_regexp .= ']$'
-
-let s:letter_regexp = '\%#=1[A-Za-z'']$'
-
 " ***************
 " *             *
 " * Autocorrect *
@@ -57,11 +38,15 @@ function! s:autocorrect(...) abort
     return
   endif
 
+  " Only plain words: skip anything with other characters
+  " and anything with a capital after the first letter
   if token !~# '^[A-Za-z'']\+$' || token =~# '^.\+[A-Z]'
     return
   endif
 
-  " Give spellbadword() sentence context from the previous line
+  " spellbadword() needs the words before the token to know whether it
+  " starts a sentence. At the start of a line (or after a blank line) we
+  " use the last word of the previous line.
   let prev_text = ctx_lnum > 1 ? getline(ctx_lnum - 1) : ''
   if ctx_lnum == 1 || prev_text =~# '^\s*$'
     let sctx = '. ' . ctx
@@ -73,7 +58,7 @@ function! s:autocorrect(...) abort
     return
   endif
 
-  " Capitalization error on the word just typed: fix it in place (no jump)
+  " Capitalization error on the word just typed: just capitalize it
   if bad[1] ==# 'caps' && bad[0] ==# token
     let l = getline(ctx_lnum)
     let cap = toupper(token[0]) . token[1:]
@@ -90,193 +75,36 @@ function! s:autocorrect(...) abort
     return
   endif
 
-  let edit_pos = getpos('.')
+  " Ordinary misspelling: check the token on its own. Without sentence
+  " context spellbadword() never reports 'caps', only real misspellings.
+  if spellbadword(token)[0] !=# token
+    return
+  endif
 
+  let edit_pos = getpos('.')
+  let spell_pos = [0, ctx_lnum, tok_col, 0]
+
+  " If the cursor has gone back before where this insert started (e.g. by
+  " backspacing), that point becomes the new start of the session.
   if s:pos_before(edit_pos, s:start_pos)
-    " If the user backspaces past the position where they entered insert mode,
-    " we still want to correct their mistakes.
-    "
-    " This might not work well for HERETICS who use the arrow keys in insert
-    " mode, but that's really on them.
     let s:start_pos = edit_pos
   endif
-
-  let line = getline('.')
-  let before_cursor = line[:edit_pos[2] - 2]
-
-  " N.B. It would probably be better just to check the last 4 bytes, but that
-  " would require doing MATHS: I'm guessing this is still pretty quick unless
-  " your line is *really* long. (I'm also not sure if that would break if the
-  " start of the last 4 bytes comes halfway through a code point.)
-  " if force
-  "       \ || empty(line)
-  "       \ ||
-  "       \ before_cursor !~? s:letter_regexp
-  if 1
-
-    if (s:no_error_nearby(before_cursor))
-      return
-    endif
-
-    " Jump to the error
-    silent! keepjumps normal! [s
-
-    let spell_pos = getpos('.')
-
-    try
-      " When there is no spelling mistake, although the cursor hasn't moved, the
-      " value for `spell_pos` is still one column back from `edit_pos`. I don't
-      " really understand why this is.
-      let weird_spell_pos = [-1, 0, 0]
-      let weird_spell_pos[1] = spell_pos[1]
-      let weird_spell_pos[2] = spell_pos[2] + 1
-
-      " Check:
-      "
-      " a). That a spelling mistake exists (i.e. if the cursor moved),
-      " b). That the spelling mistake is behind us (we might have wrapped around
-      "     to a mistake later in the buffer),
-      " c). That the spelling mistake is within the area covered by the current
-      "     insert session. We don't want to leap back to earlier mistakes.
-      "
-      " I also considered an approach where I checked if jumping back a word
-      " took us to same position as `[s`: in this way we'd only check the most
-      " recent word we typed. This doesn't work because:
-      "
-      " a). We can't use `b` because that will break for apostrophes.
-      " b). We can't use `B` because that will break for stuff-like-this.
-      "
-      " I guess I could use a backwards search using the same regular expression
-      " to find beginning of the "spell-word". This would fire correctly when we
-      " e.g. change only the second half of a word with our insert. If this
-      " weren't just a joke plugin, that should probably go on the roadmap or
-      " issues list.
-      if !s:pos_same(weird_spell_pos, edit_pos)
-            \ &&
-            \ s:pos_before(spell_pos, edit_pos)
-            \ &&
-            \ (s:pos_before(s:start_pos, spell_pos) || s:pos_same(s:start_pos, spell_pos))
-
-        " Reset correction index
-        let w:vim_you_autocorrect_correct_count = 1
-
-        let adjustment = s:correct_error(spell_pos, edit_pos, 1)
-        call s:update_position(edit_pos, spell_pos, len(w:vim_you_autocorrect_before_correction), adjustment)
-      endif
-    finally
-      " Reset the cursor position.
-      silent! call setpos('.', edit_pos)
-    endtry
-  endif
-endfunction
-
-function! s:no_error_nearby(before_cursor) abort
-  if !exists('*spellbadword')
-    " We can't check for nearby spelling errors without this function
-    return 0
+  " Don't touch words that began before this insert session
+  if s:pos_before(spell_pos, s:start_pos)
+    return
   endif
 
-  " Users have reported flickering whenever a word is typed. I couldn't
-  " reproduce (except by adding a hard-coded redraw/sleep), but it seems
-  " like the problem is that Vim is redrawing (very briefly) when we jump to
-  " the spelling mistake, so if the movement causes a scroll, (e.g. if the
-  " spelling error is off-screen), we get a flicker of that section of the
-  " buffer.
-  "
-  " Attempting to work around it by checking if there's a spelling error
-  " *before* invoking   [s   . We do this by the mechanism of looking for a
-  " spelling error behind the cursor on this line or the previous one.
-  "
-  " Note that, if the closest spelling error is further back in the buffer,
-  " Vim You, Autocorrect! would decline to correct it anyway, reasoning that
-  " it cannot just have been typed if it's over a line away.
-  "
-  " Note also that if there is a spelling error on this line, it's not
-  " relevant for this issue whether or not the user typed it in this insert:
-  " either way, jumping to it won't cause a (vertical) scroll.
-  "
-  " Note finally that if the user is at the top of the screen (accounting
-  " for 'scrolloff'), they cannot possibly just have hit enter (because then
-  " their cursor would have moved one screen line line lower down, so we
-  " *don't* want to scroll to any errors in the line immediately above.
-  "
-  " Note seriously for the last time that if there is an error at the start
-  " of a very long soft-wrapped line, and that error is off-screen, then the
-  " entire line must be off-screen, because of the way Vim will never display
-  " partial lines at the top of the window. (Only at the bottom when
-  " 'display' is set appropriately.)
-  "
-  let cursor_can_move_vertically = winheight(0) > &scrolloff * 2 + 1
-
-  " Vim will never display the first line in the file any lower than the top
-  " of the window: essentially, scrolloff is ignored at the top of the
-  " file.
-  let scrolloff_adjust = line('.') > &scrolloff + 1 ? &scrolloff : 0
-  let top_of_window = winline() - scrolloff_adjust <= 1
-
-  " In order to avoid incorrectly scrolling to the start of a long
-  " soft-wrapped line, we only check the last word before the cursor.
-  "
-  " In order to avoid incorrectly scrolling when there's a mistake early on
-  " the previous line and 'scrolloff' is super high, we only check the final
-  " word on the line.
-  "
-  " There are edge cases in the above where what 'spell' considers to be a
-  " word does match whitespace delimination. Too hard to fix though, unless
-  " lots of people complain.
-  "
-  " There's also an edge case for scrolloff=999 where the last word on this
-  " or the previous line wasn't added by the previous insert. But this will
-  " be pretty uncommon.
-  "
-  " If we only check the last word on the line, then we'll miss SpellCap
-  " errors, as the call to spellbadword won't know about the punctuation
-  " ending the previous sentence. Instead, we now check the last two words on
-  " this and, when necessary, the previous line.
-  let before_cursor_list = split(trim(a:before_cursor))
-  let previous_line_list = split(trim(getline(line('.') - 1)))
-  let previous_previous_line_list = split(trim(getline(line('.') - 2)))
-
-  let text_to_check = s:last_two_words(before_cursor_list, previous_line_list)
-  let text_to_check_previous = s:last_two_words(previous_line_list, previous_previous_line_list)
-
-  if s:no_error_in(text_to_check)
-        \ &&
-        \ (
-        \   (top_of_window && cursor_can_move_vertically)
-        \   ||
-        \   s:no_error_in(text_to_check_previous)
-        \ )
-    " There's no spelling mistake!
-    return 1
-  endif
-
-  return 0
+  try
+    call cursor(ctx_lnum, tok_col)
+    let w:vim_you_autocorrect_correct_count = 1
+    let adjustment = s:correct_error(spell_pos, edit_pos, 1)
+    call s:update_position(edit_pos, spell_pos,
+          \ len(w:vim_you_autocorrect_before_correction), adjustment)
+  finally
+    silent! call setpos('.', edit_pos)
+  endtry
 endfunction
 
-" Return a string containing the last two words in the buffer content
-" described by previous_line_list and line_list, or the empty string if
-" line_list is empty
-function! s:last_two_words(line_list, previous_line_list)
-  if len(a:line_list) > 1
-    return a:line_list[-2] .. ' ' .. a:line_list[-1]
-  elseif len(a:line_list) == 1
-    if !empty(a:previous_line_list)
-      return a:previous_line_list[-1] .. ' ' .. a:line_list[0]
-    else
-      return a:line_list[0]
-    endif
-  else
-    return ""
-  endif
-endfunction
-
-" Little helper for checking if there's a spelling error in a string
-function! s:no_error_in(the_string) abort
-  " spellbadword() returns a list containing two items. If the first item in
-  " the list is the empty string, then there was no spelling error.
-  return empty(spellbadword(a:the_string)[0])
-endfunction
 
 " Returns true if pos1 is earlier in the buffer than pos2
 function! s:pos_before(pos1, pos2) abort
@@ -284,9 +112,6 @@ function! s:pos_before(pos1, pos2) abort
         \ || a:pos1[1] == a:pos2[1] && a:pos1[2] < a:pos2[2]
 endfunction
 
-function! s:pos_same(pos1, pos2) abort
-  return a:pos1[1] == a:pos2[1] && a:pos1[2] == a:pos2[2]
-endfunction
 
 " Returns whether or not it changed pos
 " N.B. Don't really care what happens to cursor if it's between the
@@ -351,17 +176,12 @@ function! s:correct_error(spell_pos, edit_pos, index)
     endfor
     let w:vim_you_autocorrect_before_correction = old_line[start_index:end_index]
     let w:vim_you_autocorrect_after_correction = new_line[start_index:end_index + position_adjustment]
-  elseif a:edit_pos[1] == a:spell_pos[1] + 1
-    " FIXME: Is it possible that the spelling error isn't at the end of
-    "        the line? How?
+  else
+    " We got here via Enter: the misspelled word is the last one on the
+    " previous line, so everything from its start to the end of the line is
+    " the before/after text.
     let w:vim_you_autocorrect_before_correction = old_line[start_index:]
     let w:vim_you_autocorrect_after_correction = new_line[start_index:]
-  else
-    " FIXME: The spelling error isn't on this line or at the end of the
-    "        previous line. How did this happen?
-    unlet w:vim_you_autocorrect_before_correction
-    unlet w:vim_you_autocorrect_after_correction
-    unlet w:vim_you_autocorrect_last_pos
   endif
   call s:highlight_correction(a:spell_pos)
 
