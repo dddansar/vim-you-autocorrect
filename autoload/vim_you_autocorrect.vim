@@ -44,6 +44,24 @@ function! s:autocorrect(...) abort
     return
   endif
 
+  " Skip syntax groups except comments or strings or user-excluded groups.
+  if get(g:, 'vim_you_autocorrect_skip_syntax', 1)
+    let excluded = get(g:, 'vim_you_autocorrect_exclude_groups', [])
+          \ + get(b:, 'vim_you_autocorrect_exclude_groups', [])
+    if !empty(excluded)
+      for sid in synstack(ctx_lnum, tok_col)
+        if index(excluded, synIDattr(sid, 'name')) >= 0
+              \ || index(excluded, synIDattr(synIDtrans(sid), 'name')) >= 0
+          return
+        endif
+      endfor
+    endif
+    let id = synID(ctx_lnum, tok_col, 1)
+    if id && synIDattr(synIDtrans(id), 'name') !~# '^\%(Comment\|String\)$'
+      return
+    endif
+  endif
+
   " spellbadword() only reports the FIRST bad word in the string, so we must
   " not hand it the whole line: an earlier unknown word would be reported
   " instead of the token. Instead, build a minimal context: a known-good

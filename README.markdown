@@ -12,6 +12,7 @@ Detects spell errors and corrects them automatically based on Vim's most likely 
 - Added redo functionality, can cycle undo/redo multiple times.
 - Added fixes for capitalization autocorrect.
 - No longer keeps track of previous words on current and previous line(s). Only autocorrect current word being typed. Fixes another flickering issue.
+- Skip syntax groups except comments, quotes or user excluded groups.
 
 # Original README:
 
