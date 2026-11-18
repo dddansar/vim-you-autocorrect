@@ -44,13 +44,12 @@ function! s:autocorrect(...) abort
     return
   endif
 
-  " Skip syntax groups except comments, strings, or user-listed groups.
+  " Skip syntax groups except in users' groups such as comments and strings.
   if get(g:, 'vim_you_autocorrect_skip_syntax', 1)
     let id = synID(ctx_lnum, tok_col, 1)
     if id
-      let names = ['Comment', 'String']
-            \ + get(g:, 'vim_you_autocorrect_exclude_groups', [])
-            \ + get(b:, 'vim_you_autocorrect_exclude_groups', [])
+      let names = get(g:, 'vim_you_autocorrect_include_groups', [])
+              \ + get(b:, 'vim_you_autocorrect_include_groups', [])
       if index(names, synIDattr(id, 'name')) < 0
             \ && index(names, synIDattr(synIDtrans(id), 'name')) < 0
         return
